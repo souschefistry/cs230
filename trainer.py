@@ -1,5 +1,5 @@
 """
-    Copyright (c) 2018 dibghosh@stanford.edu
+    Copyright (c) 2018 dibghosh AT stanford edu
     Permission is hereby granted, free of charge, to any person obtaining
     a copy of this software and associated documentation files (the "Software"),
     to deal in the Software without restriction, including without limitation
@@ -31,6 +31,20 @@ from keras import backend as K
 from keras.models import model_from_json
 
 import tensorflow as tf
+
+import numpy as np
+import os
+import time
+from keras.preprocessing import image
+from keras.layers import GlobalAveragePooling2D, Dense, Dropout,Activation,Flatten
+from keras.applications import ResNet50
+from keras.callbacks import TensorBoard
+from keras import optimizers
+
+from keras.layers import Input
+from keras.models import Model
+from keras.utils import np_utils
+from sklearn.utils import shuffle
 
 # lscpu Core(s) per socket: 2
 NUM_PARALLEL_EXEC_UNITS = 2
@@ -137,6 +151,45 @@ def load_dataset(data_dir_list, max_per_class=100):
     img_data=img_data[0]
     return img_data, labels
 
+### write both training + validation graphs in same plot
+# https://stackoverflow.com/questions/47877475/keras-tensorboard-plot-train-and-validation-scalars-in-a-same-figure
+
+class TrainValTensorBoard(TensorBoard):
+    def __init__(self, log_dir='./logs', **kwargs):
+        # Make the original `TensorBoard` log to a subdirectory 'training'
+        training_log_dir = os.path.join(log_dir, 'training')
+        super(TrainValTensorBoard, self).__init__(training_log_dir, **kwargs)
+
+        # Log the validation metrics to a separate subdirectory
+        self.val_log_dir = os.path.join(log_dir, 'validation')
+
+    def set_model(self, model):
+        # Setup writer for validation metrics
+        self.val_writer = tf.summary.FileWriter(self.val_log_dir)
+        super(TrainValTensorBoard, self).set_model(model)
+
+    def on_epoch_end(self, epoch, logs=None):
+        # Pop the validation logs and handle them separately with
+        # `self.val_writer`. Also rename the keys so that they can
+        # be plotted on the same figure with the training metrics
+        logs = logs or {}
+        val_logs = {k.replace('val_', ''): v for k, v in logs.items() if k.startswith('val_')}
+        for name, value in val_logs.items():
+            summary = tf.Summary()
+            summary_value = summary.value.add()
+            summary_value.simple_value = value.item()
+            summary_value.tag = name
+            self.val_writer.add_summary(summary, epoch)
+        self.val_writer.flush()
+
+        # Pass the remaining logs to `TensorBoard.on_epoch_end`
+        logs = {k: v for k, v in logs.items() if not k.startswith('val_')}
+        super(TrainValTensorBoard, self).on_epoch_end(epoch, logs)
+
+    def on_train_end(self, logs=None):
+        super(TrainValTensorBoard, self).on_train_end(logs)
+        self.val_writer.close()
+
 def save_model_to_disk(model, model_name="model"):
     # serialize model to JSON
     model_json = model.to_json()
@@ -161,7 +214,7 @@ train_data_dir = os.listdir("../deepfashion/dataset/train/")
 val_data_dir = os.listdir("../deepfashion/dataset/val/")
 test_data_dir = os.listdir("../deepfashion/dataset/test/")
 
-images_per_class = 200
+images_per_class = 600
 print("[*] preparing train data with max %s images per class" % images_per_class)
 train_data, train_labels = load_dataset(train_data_dir, images_per_class)
 print("[*] preparing val data with max %s images per class" % images_per_class)
@@ -208,24 +261,9 @@ integer_encoded = integer_encoded.reshape(len(integer_encoded), 1)
 test_onehot_encoded = onehot_encoder.fit_transform(integer_encoded)
 
 ### network
-
-import numpy as np
-import os
-import time
-from keras.preprocessing import image
-from keras.layers import GlobalAveragePooling2D, Dense, Dropout,Activation,Flatten
-from keras.applications import ResNet50
-from keras.callbacks import TensorBoard
-from keras import optimizers
-
-from keras.layers import Input
-from keras.models import Model
-from keras.utils import np_utils
-from sklearn.utils import shuffle
-# from sklearn.cross_validation import train_test_split
 # keras BN bug - https://github.com/keras-team/keras/pull/9965
-K.clear_session()
-K.set_learning_phase(0)
+# K.clear_session()
+# K.set_learning_phase(0)
 
 base_model = ResNet50(
         weights='imagenet',
@@ -258,9 +296,10 @@ custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=optimizer
 
 # train settings
 TRAIN_BATCH_SIZE = 128
-EPOCHS = 100
+WARM_UP_EPOCHS = 5
+FINAL_EPOCHS = 200
 
-tensorboard = TensorBoard(log_dir="./deepfashion/tboard-resnet50-logs/{}_{}_{}".format(TRAIN_BATCH_SIZE, EPOCHS, time.time()), write_graph=True)
+tensorboard = TensorBoard(log_dir="./deepfashion/tboard-resnet50-logs/{}_{}_{}".format(TRAIN_BATCH_SIZE, FINAL_EPOCHS, time.time()), write_graph=True)
 
 t=time.time()
 with tf.device('/gpu:0'):
@@ -268,21 +307,10 @@ with tf.device('/gpu:0'):
         train_data, 
         train_onehot_encoded, 
         batch_size=TRAIN_BATCH_SIZE, 
-        epochs=EPOCHS, 
+        epochs=WARM_UP_EPOCHS, 
         verbose=1, 
-        validation_data=(val_data, val_onehot_encoded),
-        callbacks=[tensorboard])
+        validation_data=(val_data, val_onehot_encoded))
 print('Training time (secs): %s' % (time.time() - t))
-
-# Store the model on disk
-model_name = 'resnet50_{}_{}_{}.h5'.format(TRAIN_BATCH_SIZE, EPOCHS, time.time())
-save_model_to_disk(custom_resnet_model, model_name)
-
-print('STATIC LEARNING_PHASE = 1')
-K.clear_session()
-K.set_learning_phase(1)
-custom_resnet_model = load_model_from_disk(model_name)
-custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=optimizers.Adam(), metrics=['accuracy'])
 
 with tf.device('/gpu:0'):
     (loss, accuracy) = custom_resnet_model.evaluate(test_data, 
@@ -290,7 +318,61 @@ with tf.device('/gpu:0'):
                                                      batch_size=TRAIN_BATCH_SIZE, 
                                                      verbose=1)
 
-print("[INFO] loss={:.4f}, accuracy: {:.4f}%".format(loss,accuracy * 100))
+print("[INFO] pre fine-tune loss={:.4f}, pre fine-tune accuracy: {:.4f}%".format(loss,accuracy * 100))
+
+# at this point, the top layers are well trained and we can start fine-tuning
+# convolutional layers from inception V3. We will freeze the bottom N layers
+# and train the remaining top layers.
+
+# let's visualize layer names and layer indices to see how many layers
+# we should freeze:
+for i, layer in enumerate(base_model.layers):
+    print(i, layer.name)
+    
+# we chose to train the top 1 resnet blocks, i.e. we will freeze
+# the first 163 layers and unfreeze the rest:
+for layer in base_model.layers[:163]:
+    layer.trainable = False
+for layer in base_model.layers[163:]:
+    layer.trainable = True    
+
+# UNUSED: Store the model on disk
+# model_name = 'resnet50_{}_{}_{}.h5'.format(TRAIN_BATCH_SIZE, EPOCHS, time.time())
+# save_model_to_disk(custom_resnet_model, model_name)
+
+# print('STATIC LEARNING_PHASE = 1')
+# K.clear_session()
+# K.set_learning_phase(1)
+
+# UNUSED: custom_resnet_model = load_model_from_disk(model_name)
+
+
+# we need to recompile the model for these modifications to take effect
+# we use SGD with a low learning rate
+# from keras.optimizers import SGD
+# custom_resnet_model.compile(optimizer=SGD(lr=0.0001, momentum=0.9), loss='categorical_crossentropy')
+
+custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=optimizers.Adam(), metrics=['accuracy'])
+
+# we train our model again (this time fine-tuning the top 2 inception blocks
+# alongside the top Dense layers
+with tf.device('/gpu:0'):
+    hist = custom_resnet_model.fit(
+        train_data, 
+        train_onehot_encoded, 
+        batch_size=TRAIN_BATCH_SIZE, 
+        epochs=FINAL_EPOCHS, 
+        verbose=1, 
+        validation_data=(val_data, val_onehot_encoded),
+        callbacks=[tensorboard])    
+
+with tf.device('/gpu:0'):
+    (loss, accuracy) = custom_resnet_model.evaluate(test_data, 
+                                                     test_onehot_encoded, 
+                                                     batch_size=TRAIN_BATCH_SIZE, 
+                                                     verbose=1)
+
+print("[INFO] final loss={:.4f}, final accuracy: {:.4f}%".format(loss,accuracy * 100))
 
 # let's visualize layer names and layer indices to see how many layers
 # we should freeze:
