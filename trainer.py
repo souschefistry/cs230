@@ -135,12 +135,12 @@ def load_dataset(data_dir_list, max_per_class=100):
     
     img_data_list, labels =[],[]
 
-    for dataset in tqdm(data_dir_list):
-        img_list=glob("../deepfashion/dataset/train/%s/*.jpg" % dataset)
-        print ('Loaded {} images out of {} for category {}'.format(len(img_list[:max_per_class]), len(img_list), dataset))
+    for category in tqdm(data_dir_list):
+        img_list=glob("../deepfashion/dataset/train/%s/*.jpg" % category)
+        print ('Loaded {} images out of {} for category {}'.format(len(img_list[:max_per_class]), len(img_list), category))
         for img_path in img_list[:max_per_class]:
-            labels.append(dataset)
-            img = image.load_img(img_path, target_size=(224, 224))
+            labels.append(category)
+            img = image.load_img(img_path, target_size=(img_h, img_w))
             x = image.img_to_array(img)
             x = np.expand_dims(x, axis=0)
             x = preprocess_input(x)
@@ -215,12 +215,12 @@ val_data_dir = os.listdir("../deepfashion/dataset/val/")
 test_data_dir = os.listdir("../deepfashion/dataset/test/")
 
 images_per_class = 600
-print("[*] preparing train data with max %s images per class" % images_per_class)
 train_data, train_labels = load_dataset(train_data_dir, images_per_class)
-print("[*] preparing val data with max %s images per class" % images_per_class)
+print("[*] loaded %s training images with max %s samples per class" % (len(train_labels), images_per_class))
 val_data, val_labels = load_dataset(val_data_dir, images_per_class)
-print("[*] preparing test data with max %s images per class" % images_per_class)
+print("[*] loaded %s training images with max %s samples per class" % (len(val_labels), images_per_class))
 test_data, test_labels = load_dataset(test_data_dir, images_per_class)
+print("[*] loaded %s training images with max %s samples per class" % (len(test_labels), images_per_class))
 
 # train_set = get_dataset(train_data_dir)
 # val_set = get_dataset(val_data_dir)
