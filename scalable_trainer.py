@@ -1,5 +1,5 @@
 """
-    Copyright (c) 2018 dibghosh@stanford.edu
+    Copyright (c) 2018 dibghosh AT stanfordedu
 
     Permission is hereby granted, free of charge, to any person obtaining
     a copy of this software and associated documentation files (the "Software"),
@@ -126,11 +126,17 @@ def load_model_from_disk(model_name):
     print("Loaded %s from disk" % model_name)
     return loaded_model
 
-### network
+### train + data process settings
 
-BATCH_SIZE = 128
 NUM_EPOCHS = 1
 n_H, n_W = 224, 224
+TRAIN_BATCH_SIZE = 128
+WARM_UP_EPOCHS = 5
+FINE_TUNING_EPOCHS = 500
+nb_train_samples = 209222
+nb_validation_samples= 40000
+nb_test_samples = 40000
+
 train_datagen = ImageDataGenerator(
         rescale=1./255,
         shear_range=0.2,
@@ -143,25 +149,25 @@ test_datagen = ImageDataGenerator(rescale=1./255)
 train_generator = train_datagen.flow_from_directory(
         '../deepfashion/dataset/train/',
         target_size=(n_H, n_W),
-        batch_size=BATCH_SIZE,
+        batch_size=TRAIN_BATCH_SIZE,
         class_mode='categorical')
 
 validation_generator = test_datagen.flow_from_directory(
         '../deepfashion/dataset/val/',
         target_size=(n_H, n_W),
-        batch_size=BATCH_SIZE,
+        batch_size=TRAIN_BATCH_SIZE,
         class_mode='categorical')
 
 test_generator = test_datagen.flow_from_directory(
         '../deepfashion/dataset/test/',
         target_size=(n_H, n_W),
-        batch_size=BATCH_SIZE,
+        batch_size=TRAIN_BATCH_SIZE,
         class_mode='categorical')
 
 base_model = ResNet50(
         weights='imagenet',
         include_top=False,
-        input_shape=(n_H, n_H, 3))
+        input_shape=(n_H, n_W, 3))
 
 base_model.summary()
 
@@ -190,13 +196,79 @@ for layer in custom_resnet_model.layers:
 
 custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=optimizers.Adam(), metrics=['accuracy'])
 
+# first warm up last layer with few initial runs
+
+t=time.time()
+with tf.device('/gpu:0'):
+    history = custom_resnet_model.fit_generator(
+                train_generator,
+                steps_per_epoch=nb_train_samples // TRAIN_BATCH_SIZE,
+                epochs=WARM_UP_EPOCHS,
+                validation_data=validation_generator,
+                validation_steps=nb_validation_samples // TRAIN_BATCH_SIZE,
+                verbose=1)
+print('Training time (secs): %s' % (time.time() - t))
+
+# get accuracy numbers
+with tf.device('/gpu:0'):
+    (loss, accuracy) = custom_resnet_model.evaluate_generator(
+        test_generator,
+        steps_per_epoch=nb_test_samples // TRAIN_BATCH_SIZE,
+        verbose=1)
+
+print("[INFO] pre fine-tune loss={:.4f}, pre fine-tune accuracy: {:.4f}%".format(loss,accuracy * 100))
+
+# define tensorboard details
+tensorboard = TensorBoard(log_dir="./deepfashion/tboard-resnet50-scalable/{}_{}_{}".format(TRAIN_BATCH_SIZE, FINAL_EPOCHS, time.time()), write_graph=True)
+
 # improvement #1
 # early_stopping = EarlyStopping(verbose=1, patience=40, monitor='val_loss')
 # callbacks_list = [early_stopping, tensorboard]
 
-tensorboard = TrainValTensorBoard(log_dir="./deepfashion/tboard-resnet50-logs/{}_{}_{}".format(BATCH_SIZE, NUM_EPOCHS, time.time()), write_graph=True)
+# tensorboard = TrainValTensorBoard(log_dir="./deepfashion/tboard-resnet50-logs/{}_{}_{}".format(BATCH_SIZE, NUM_EPOCHS, time.time()), write_graph=True)
 
 callbacks_list = [tensorboard]
+
+# at this point, the top layers are well trained and we can start fine-tuning
+# convolutional layers from inception V3. We will freeze the bottom N layers
+# and train the remaining top layers.
+
+# let's visualize layer names and layer indices to see how many layers
+# we should freeze:
+for i, layer in enumerate(base_model.layers):
+    print(i, layer.name)
+    
+# we chose to train the top 1 resnet blocks, i.e. we will freeze
+# the first 163 layers and unfreeze the rest:
+for layer in base_model.layers[:163]:
+    layer.trainable = False
+for layer in base_model.layers[163:]:
+    layer.trainable = True
+
+# recompile network with unfreezing weights
+custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=optimizers.Adam(), metrics=['accuracy'])
+
+# run full training with fine tuning
+t=time.time()
+with tf.device('/gpu:0'):
+    history = custom_resnet_model.fit_generator(
+                train_generator,
+                steps_per_epoch=nb_train_samples // TRAIN_BATCH_SIZE,
+                epochs=FINE_TUNING_EPOCHS,
+                validation_data=validation_generator,
+                validation_steps=nb_validation_samples // TRAIN_BATCH_SIZE,
+                verbose=1,
+                callbacks=callbacks_list)
+print('Training time (secs): %s' % (time.time() - t))
+
+# run accuracy calculation after finetuning
+with tf.device('/gpu:0'):
+    (loss, accuracy) = custom_resnet_model.evaluate_generator(
+        test_generator,
+        steps_per_epoch=nb_test_samples // TRAIN_BATCH_SIZE,
+        verbose=1)
+
+print("[INFO] final loss={:.4f}, final accuracy: {:.4f}%".format(loss,accuracy * 100))
 
 # t=time.time()
 # with tf.device('/gpu:0'):
@@ -226,39 +298,16 @@ callbacks_list = [tensorboard]
 #         test_generator,
 #         verbose=1)
 
-nb_train_samples = 209222
-nb_validation_samples= 40000
-nb_test_samples = 40000
-
-t=time.time()
-with tf.device('/gpu:0'):
-    history = custom_resnet_model.fit_generator(
-                train_generator,
-                steps_per_epoch=nb_train_samples // BATCH_SIZE,
-                epochs=NUM_EPOCHS,
-                validation_data=validation_generator,
-                validation_steps=nb_validation_samples // BATCH_SIZE,
-                verbose=1,
-                callbacks=callbacks_list)
-print('Training time (secs): %s' % (time.time() - t))
 
 # store the model on disk
-model_name = 'scalable_batch_resnet50_{}_{}_{}.h5'.format(TRAIN_BATCH_SIZE, EPOCHS, time.time())
-save_model_to_disk(custom_resnet_model, model_name)
+# model_name = 'scalable_batch_resnet50_{}_{}_{}.h5'.format(TRAIN_BATCH_SIZE, EPOCHS, time.time())
+# save_model_to_disk(custom_resnet_model, model_name)
 
-print('STATIC LEARNING_PHASE = 1')
-K.clear_session()
-K.set_learning_phase(1)
+# print('STATIC LEARNING_PHASE = 1')
+# K.clear_session()
+# K.set_learning_phase(1)
 
-# load saved model
-custom_resnet_model = load_model_from_disk(model_name)
-custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=optimizers.Adam(), metrics=['accuracy'])
-
-with tf.device('/gpu:0'):
-    (loss, accuracy) = custom_resnet_model.evaluate_generator(
-        test_generator,
-        steps_per_epoch=nb_test_samples // BATCH_SIZE,
-        verbose=1)
-
-print("[INFO] loss={:.4f}, accuracy: {:.4f}%".format(loss,accuracy * 100))
+# # load saved model
+# custom_resnet_model = load_model_from_disk(model_name)
+# custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=optimizers.Adam(), metrics=['accuracy'])
 
