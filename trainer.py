@@ -24,6 +24,8 @@ import os
 import numpy as np
 import json
 import random
+import matplotlib.pyplot as plt
+from IPython.display import clear_output
 
 import keras
 from keras.utils.data_utils import get_file
@@ -219,6 +221,55 @@ def load_model_from_disk(model_name):
     print("Loaded %s from disk" % model_name)
     return loaded_model
 
+class TrainingPlot(keras.callbacks.Callback):
+    
+    def __init__(self, num_epochs, batch_size, **kwargs):
+        self.num_epochs = num_epochs
+        self.batch_size = batch_size
+        super(TrainingPlot, self).__init__(**kwargs)
+    
+    # This function is called when the training begins
+    def on_train_begin(self, logs={}):
+        # Initialize the lists for holding the logs, losses and accuracies
+        self.losses = []
+        self.acc = []
+        self.val_losses = []
+        self.val_acc = []
+        self.logs = []        
+    
+    # This function is called at the end of each epoch
+    def on_epoch_end(self, epoch, logs={}):
+        
+        # Append the logs, losses and accuracies to the lists
+        self.logs.append(logs)
+        self.losses.append(logs.get('loss'))
+        self.acc.append(logs.get('acc'))
+        self.val_losses.append(logs.get('val_loss'))
+        self.val_acc.append(logs.get('val_acc'))
+        
+        # Before plotting ensure at least 2 epochs have passed
+        if len(self.losses) > 1:
+            
+            # Clear the previous plot
+            clear_output(wait=True)
+            N = np.arange(0, len(self.losses))
+            
+            # You can chose the style of your preference
+            # print(plt.style.available) to see the available options
+            plt.style.use("seaborn")
+            
+            # Plot train loss, train acc, val loss and val acc against epochs passed
+            plt.figure()
+            plt.plot(N, self.losses, label = "train_loss")
+            plt.plot(N, self.acc, label = "train_acc")
+            plt.plot(N, self.val_losses, label = "val_loss")
+            plt.plot(N, self.val_acc, label = "val_acc")
+            plt.title("Training Loss and Accuracy [Epoch {}]".format(epoch))
+            plt.xlabel("Epoch #")
+            plt.ylabel("Loss/Accuracy")
+            plt.legend()
+            plt.savefig('resnet50_{}_{}_{}.png'.format(self.batch_size, self.num_epochs, time.time()))
+
 train_data_dir = os.listdir("../deepfashion/dataset/train/")
 val_data_dir = os.listdir("../deepfashion/dataset/val/")
 test_data_dir = os.listdir("../deepfashion/dataset/test/")
@@ -340,10 +391,10 @@ for i, layer in enumerate(base_model.layers):
     
 # Test # 1: we chose to train the top 1 resnet blocks, i.e. we will freeze
 # the first 163 layers and unfreeze the rest:
-for layer in base_model.layers[:163]:
-    layer.trainable = False
-for layer in base_model.layers[163:]:
-    layer.trainable = True   
+# for layer in base_model.layers[:163]:
+#     layer.trainable = False
+# for layer in base_model.layers[163:]:
+#     layer.trainable = True   
     
 # Test # 2: we chose to train the top 2 resnet blocks, i.e. we will freeze
 # the first 153 layers and unfreeze the rest:
@@ -370,6 +421,9 @@ for layer in base_model.layers[153:]:
 
 custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=optimizers.Adam(), metrics=['accuracy'])
 
+# init plotter
+plot_losses = TrainingPlot(FINAL_EPOCHS, TRAIN_BATCH_SIZE)
+
 # we train our model again (this time fine-tuning the top 2 inception blocks
 # alongside the top Dense layers
 with tf.device('/gpu:0'):
@@ -380,7 +434,7 @@ with tf.device('/gpu:0'):
         epochs=FINAL_EPOCHS, 
         verbose=1, 
         validation_data=(val_data, val_onehot_encoded),
-        callbacks=[tensorboard])    
+        callbacks=[tensorboard, plot_losses])
 
 with tf.device('/gpu:0'):
     (loss, accuracy) = custom_resnet_model.evaluate(test_data, 
