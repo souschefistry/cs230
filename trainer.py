@@ -48,8 +48,17 @@ from sklearn.utils import shuffle
 
 # lscpu Core(s) per socket: 2
 NUM_PARALLEL_EXEC_UNITS = 2
-sess = tf.Session(config=tf.ConfigProto(log_device_placement=True))
-tf.ConfigProto(intra_op_parallelism_threads=NUM_PARALLEL_EXEC_UNITS, inter_op_parallelism_threads=2, allow_soft_placement=True, device_count = {'GPU': 1, 'CPU': NUM_PARALLEL_EXEC_UNITS })
+# sess = tf.Session(config=tf.ConfigProto(log_device_placement=True))
+sess = tf.Session(
+    config=tf.ConfigProto(
+        log_device_placement=True,
+        intra_op_parallelism_threads=NUM_PARALLEL_EXEC_UNITS, 
+        inter_op_parallelism_threads=2,
+        allow_soft_placement=True,
+#         gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.5),
+        device_count = {'GPU': 1, 'CPU': NUM_PARALLEL_EXEC_UNITS }
+    )
+)
 keras.backend.set_session(sess)
 
 NUM_CLASSES = 46
@@ -277,7 +286,7 @@ last_layer = base_model.output
 x = GlobalAveragePooling2D()(last_layer)
 # add fully-connected & dropout layers
 x = Dense(1024, activation='relu',name='fc-1')(x)
-# a softmax layer for 4 classes
+# a softmax layer for 46 classes
 predictions = Dense(NUM_CLASSES, activation='softmax',name='output_layer')(x)
 
 # this is the model we will train
@@ -296,8 +305,8 @@ custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=optimizer
 
 # train settings
 TRAIN_BATCH_SIZE = 128
-WARM_UP_EPOCHS = 5
-FINAL_EPOCHS = 200
+WARM_UP_EPOCHS = 1
+FINAL_EPOCHS = 80
 
 tensorboard = TensorBoard(log_dir="./deepfashion/tboard-resnet50-logs/{}_{}_{}".format(TRAIN_BATCH_SIZE, FINAL_EPOCHS, time.time()), write_graph=True)
 
@@ -329,11 +338,18 @@ print("[INFO] pre fine-tune loss={:.4f}, pre fine-tune accuracy: {:.4f}%".format
 for i, layer in enumerate(base_model.layers):
     print(i, layer.name)
     
-# we chose to train the top 1 resnet blocks, i.e. we will freeze
+# Test # 1: we chose to train the top 1 resnet blocks, i.e. we will freeze
 # the first 163 layers and unfreeze the rest:
 for layer in base_model.layers[:163]:
     layer.trainable = False
 for layer in base_model.layers[163:]:
+    layer.trainable = True   
+    
+# Test # 2: we chose to train the top 2 resnet blocks, i.e. we will freeze
+# the first 153 layers and unfreeze the rest:
+for layer in base_model.layers[:153]:
+    layer.trainable = False
+for layer in base_model.layers[153:]:
     layer.trainable = True    
 
 # UNUSED: Store the model on disk
