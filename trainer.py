@@ -16,7 +16,6 @@
     TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
     OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
-
 import sys
 print(sys.path)
 print(sys.executable)
@@ -31,6 +30,7 @@ import keras
 from keras.utils.data_utils import get_file
 from keras import backend as K
 from keras.models import model_from_json
+from keras import regularizers
 
 import tensorflow as tf
 
@@ -428,7 +428,7 @@ for layer in base_model.layers[153:]:
 # from keras.optimizers import SGD
 # custom_resnet_model.compile(optimizer=SGD(lr=0.0001, momentum=0.9), loss='categorical_crossentropy')
 
-opti_grad_clip=Adam(clipnorm=GRAD_CLIP_THRESHOLD)
+opti_grad_clip=optimizers.Adam(clipnorm=GRAD_CLIP_THRESHOLD)
 custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=opti_grad_clip, metrics=['accuracy'])
 
 # init plotter
