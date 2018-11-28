@@ -269,6 +269,7 @@ class TrainingPlot(keras.callbacks.Callback):
             plt.ylabel("Loss/Accuracy")
             plt.legend()
             plt.savefig('resnet50_{}_{}_{}.png'.format(self.batch_size, self.num_epochs, time.time()))
+            plt.close()            
 
 train_data_dir = os.listdir("../deepfashion/dataset/train/")
 val_data_dir = os.listdir("../deepfashion/dataset/val/")
@@ -332,11 +333,18 @@ base_model = ResNet50(
 
 base_model.summary()
 
+L2_RATE_KERNEL = 0.01
+L2_RATE_ACTIVITY = 0.01
+
 last_layer = base_model.output
 # add a global spatial average pooling layer
 x = GlobalAveragePooling2D()(last_layer)
 # add fully-connected & dropout layers
-x = Dense(1024, activation='relu',name='fc-1')(x)
+x = Dense(1024, 
+          activation='relu',
+          name='fc-1',
+          kernel_regularizer=regularizers.l2(L2_RATE_KERNEL),
+          activity_regularizer=regularizers.l2(L2_RATE_ACTIVITY))(x)
 # a softmax layer for 46 classes
 predictions = Dense(NUM_CLASSES, activation='softmax',name='output_layer')(x)
 
@@ -357,7 +365,8 @@ custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=optimizer
 # train settings
 TRAIN_BATCH_SIZE = 128
 WARM_UP_EPOCHS = 1
-FINAL_EPOCHS = 80
+FINAL_EPOCHS = 50
+GRAD_CLIP_THRESHOLD = 0.5
 
 tensorboard = TensorBoard(log_dir="./deepfashion/tboard-resnet50-logs/{}_{}_{}".format(TRAIN_BATCH_SIZE, FINAL_EPOCHS, time.time()), write_graph=True)
 
@@ -419,7 +428,8 @@ for layer in base_model.layers[153:]:
 # from keras.optimizers import SGD
 # custom_resnet_model.compile(optimizer=SGD(lr=0.0001, momentum=0.9), loss='categorical_crossentropy')
 
-custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=optimizers.Adam(), metrics=['accuracy'])
+opti_grad_clip=Adam(clipnorm=GRAD_CLIP_THRESHOLD)
+custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=opti_grad_clip, metrics=['accuracy'])
 
 # init plotter
 plot_losses = TrainingPlot(FINAL_EPOCHS, TRAIN_BATCH_SIZE)
@@ -448,4 +458,5 @@ print("[INFO] final loss={:.4f}, final accuracy: {:.4f}%".format(loss,accuracy *
 # we should freeze:
 # for i, layer in enumerate(base_model.layers):
 #     print(i, layer.name)
+
 
