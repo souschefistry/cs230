@@ -40,7 +40,7 @@ import time
 from keras.preprocessing import image
 from keras.layers import GlobalAveragePooling2D, Dense, Dropout,Activation,Flatten
 from keras.applications import ResNet50
-from keras.callbacks import TensorBoard
+from keras.callbacks import TensorBoard, EarlyStopping
 from keras import optimizers
 
 from keras.layers import Input
@@ -342,9 +342,7 @@ x = GlobalAveragePooling2D()(last_layer)
 # add fully-connected & dropout layers
 x = Dense(1024, 
           activation='relu',
-          name='fc-1',
-          kernel_regularizer=regularizers.l2(L2_RATE_KERNEL),
-          activity_regularizer=regularizers.l2(L2_RATE_ACTIVITY))(x)
+          name='fc-1')(x)
 # a softmax layer for 46 classes
 predictions = Dense(NUM_CLASSES, activation='softmax',name='output_layer')(x)
 
@@ -365,7 +363,7 @@ custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=optimizer
 # train settings
 TRAIN_BATCH_SIZE = 128
 WARM_UP_EPOCHS = 1
-FINAL_EPOCHS = 50
+FINAL_EPOCHS = 100
 GRAD_CLIP_THRESHOLD = 0.5
 
 tensorboard = TensorBoard(log_dir="./deepfashion/tboard-resnet50-logs/{}_{}_{}".format(TRAIN_BATCH_SIZE, FINAL_EPOCHS, time.time()), write_graph=True)
@@ -399,18 +397,25 @@ for i, layer in enumerate(base_model.layers):
     print(i, layer.name)
     
 # Test # 1: we chose to train the top 1 resnet blocks, i.e. we will freeze
-# the first 163 layers and unfreeze the rest:
+# the first 163 layers and unfreeze the rest: (add_15)
 # for layer in base_model.layers[:163]:
 #     layer.trainable = False
 # for layer in base_model.layers[163:]:
 #     layer.trainable = True   
     
 # Test # 2: we chose to train the top 2 resnet blocks, i.e. we will freeze
-# the first 153 layers and unfreeze the rest:
-for layer in base_model.layers[:153]:
+# the first 153 layers and unfreeze the rest: (add_14)
+# for layer in base_model.layers[:153]:
+#     layer.trainable = False
+# for layer in base_model.layers[153:]:
+#     layer.trainable = True
+    
+# Test # 3: we chose to train the top 3 resnet blocks, i.e. we will freeze
+# the first 143 layers and unfreeze the rest: (add_13)
+for layer in base_model.layers[:143]:
     layer.trainable = False
-for layer in base_model.layers[153:]:
-    layer.trainable = True    
+for layer in base_model.layers[143:]:
+    layer.trainable = True   
 
 # UNUSED: Store the model on disk
 # model_name = 'resnet50_{}_{}_{}.h5'.format(TRAIN_BATCH_SIZE, EPOCHS, time.time())
@@ -428,7 +433,10 @@ for layer in base_model.layers[153:]:
 # from keras.optimizers import SGD
 # custom_resnet_model.compile(optimizer=SGD(lr=0.0001, momentum=0.9), loss='categorical_crossentropy')
 
-opti_grad_clip=optimizers.Adam(clipnorm=GRAD_CLIP_THRESHOLD)
+# stop if val_loss stops improving for 10 epochs
+early_stopping = EarlyStopping(verbose=1, patience=10, monitor='val_loss')
+
+opti_grad_clip=optimizers.Adam()
 custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=opti_grad_clip, metrics=['accuracy'])
 
 # init plotter
@@ -444,13 +452,13 @@ with tf.device('/gpu:0'):
         epochs=FINAL_EPOCHS, 
         verbose=1, 
         validation_data=(val_data, val_onehot_encoded),
-        callbacks=[tensorboard, plot_losses])
+        callbacks=[tensorboard, plot_losses, early_stopping])
 
 with tf.device('/gpu:0'):
-    (loss, accuracy) = custom_resnet_model.evaluate(test_data, 
-                                                     test_onehot_encoded, 
-                                                     batch_size=TRAIN_BATCH_SIZE, 
-                                                     verbose=1)
+    (loss, accuracy) = custom_resnet_model.evaluate(test_data,
+                                                    test_onehot_encoded,
+                                                    batch_size=TRAIN_BATCH_SIZE,
+                                                    verbose=1)
 
 print("[INFO] final loss={:.4f}, final accuracy: {:.4f}%".format(loss,accuracy * 100))
 
