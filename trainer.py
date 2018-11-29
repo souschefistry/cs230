@@ -239,7 +239,7 @@ class LossHistory(keras.callbacks.Callback):
         self.lr = []
  
     def on_epoch_end(self, batch, logs={}):
-        self.losses.append(logs.get(‘loss’))
+        self.losses.append(logs.get('loss'))
         self.lr.append(step_decay(len(self.losses)))
 
 class TrainingPlot(keras.callbacks.Callback):
