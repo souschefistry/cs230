@@ -147,11 +147,15 @@ def load_dataset(data_dir_list, max_per_class=100):
     """
     
     img_data_list, labels =[],[]
+    images_per_class = max_per_class
 
     for category in tqdm(data_dir_list):
         img_list=glob("../deepfashion/dataset/train/%s/*.jpg" % category)
-        print ('Loaded {} images out of {} for category {}'.format(len(img_list[:max_per_class]), len(img_list), category))
-        for img_path in img_list[:max_per_class]:
+        if not max_per_class:
+            # take all images
+            images_per_class = len(img_list)
+        print ('Loaded {} images out of {} for category {}'.format(images_per_class, len(img_list), category))
+        for img_path in img_list[:images_per_class]:
             labels.append(category)
             img = image.load_img(img_path, target_size=(img_h, img_w))
             x = image.img_to_array(img)
@@ -301,10 +305,10 @@ test_data_dir = os.listdir("../deepfashion/dataset/test/")
 images_per_class = 600
 train_data, train_labels = load_dataset(train_data_dir, images_per_class)
 print("[*] loaded %s training images with max %s samples per class" % (len(train_labels), images_per_class))
-val_data, val_labels = load_dataset(val_data_dir, images_per_class)
-print("[*] loaded %s training images with max %s samples per class" % (len(val_labels), images_per_class))
-test_data, test_labels = load_dataset(test_data_dir, images_per_class)
-print("[*] loaded %s training images with max %s samples per class" % (len(test_labels), images_per_class))
+val_data, val_labels = load_dataset(val_data_dir, max_per_class=None)
+print("[*] loaded %s validation images with max %s samples per class" % (len(val_labels), images_per_class))
+test_data, test_labels = load_dataset(test_data_dir, max_per_class=None)
+print("[*] loaded %s test images with max %s samples per class" % (len(test_labels), images_per_class))
 
 # train_set = get_dataset(train_data_dir)
 # val_set = get_dataset(val_data_dir)
@@ -499,5 +503,7 @@ print("[INFO] final loss={:.4f}, final accuracy: {:.4f}, final top_5: {:.4f}, fi
 # we should freeze:
 # for i, layer in enumerate(base_model.layers):
 #     print(i, layer.name)
+
+
 
 
