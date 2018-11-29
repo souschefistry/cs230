@@ -40,7 +40,7 @@ import time
 from keras.preprocessing import image
 from keras.layers import GlobalAveragePooling2D, Dense, Dropout,Activation,Flatten
 from keras.applications import ResNet50
-from keras.callbacks import TensorBoard, EarlyStopping
+from keras.callbacks import TensorBoard, EarlyStopping, LearningRateScheduler
 from keras import optimizers
 
 from keras.layers import Input
@@ -221,6 +221,27 @@ def load_model_from_disk(model_name):
     print("Loaded %s from disk" % model_name)
     return loaded_model
 
+# apply learning rate decay
+# using step decay function and LearningRateScheduler callback to take
+# step decay function as argument and return updated learning rates for use in SGD optimizer.
+def step_decay(epoch):
+    initial_lrate = 0.0001
+    drop = 0.5
+    epochs_drop = 10.0
+    lrate = initial_lrate * math.pow(drop,
+                                     math.floor((1+epoch)/epochs_drop))
+    return lrate
+
+# also create a learning rate decay plotter
+class LossHistory(keras.callbacks.Callback):
+    def on_train_begin(self, logs={}):
+        self.losses = []
+        self.lr = []
+ 
+    def on_epoch_end(self, batch, logs={}):
+        self.losses.append(logs.get(‘loss’))
+        self.lr.append(step_decay(len(self.losses)))
+
 class TrainingPlot(keras.callbacks.Callback):
     
     def __init__(self, num_epochs, batch_size, **kwargs):
@@ -365,6 +386,7 @@ TRAIN_BATCH_SIZE = 128
 WARM_UP_EPOCHS = 1
 FINAL_EPOCHS = 100
 GRAD_CLIP_THRESHOLD = 0.5
+ALPHA_LEARNING_RATE = 0.001
 
 tensorboard = TensorBoard(log_dir="./deepfashion/tboard-resnet50-logs/{}_{}_{}".format(TRAIN_BATCH_SIZE, FINAL_EPOCHS, time.time()), write_graph=True)
 
@@ -431,16 +453,22 @@ for layer in base_model.layers[143:]:
 # we need to recompile the model for these modifications to take effect
 # we use SGD with a low learning rate
 # from keras.optimizers import SGD
-# custom_resnet_model.compile(optimizer=SGD(lr=0.0001, momentum=0.9), loss='categorical_crossentropy')
+# custom_resnet_model.compile(optimizer=SGD(lr=0.0001, momentum=0.9), loss='categorical_crossentropy', metrics=['accuracy'])
 
 # stop if val_loss stops improving for 10 epochs
-early_stopping = EarlyStopping(verbose=1, patience=10, monitor='val_loss')
+# early_stopping = EarlyStopping(verbose=1, patience=10, monitor='val_loss')
 
-opti_grad_clip=optimizers.Adam()
+opti_grad_clip=optimizers.Adam(lr=ALPHA_LEARNING_RATE)
+# opti_grad_clip=optimizers.RMSprop(lr=2e-3)
 custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=opti_grad_clip, metrics=['accuracy'])
 
 # init plotter
 plot_losses = TrainingPlot(FINAL_EPOCHS, TRAIN_BATCH_SIZE)
+
+# learning rate
+# loss_history = LossHistory()
+# lrate = LearningRateScheduler(step_decay)
+lr_decay = callbacks.LearningRateScheduler(schedule=lambda epoch: ALPHA_LEARNING_RATE * (0.9 ** epoch))
 
 # we train our model again (this time fine-tuning the top 2 inception blocks
 # alongside the top Dense layers
@@ -452,7 +480,7 @@ with tf.device('/gpu:0'):
         epochs=FINAL_EPOCHS, 
         verbose=1, 
         validation_data=(val_data, val_onehot_encoded),
-        callbacks=[tensorboard, plot_losses, early_stopping])
+        callbacks=[tensorboard, plot_losses, lr_decay])
 
 with tf.device('/gpu:0'):
     (loss, accuracy) = custom_resnet_model.evaluate(test_data,
@@ -466,5 +494,6 @@ print("[INFO] final loss={:.4f}, final accuracy: {:.4f}%".format(loss,accuracy *
 # we should freeze:
 # for i, layer in enumerate(base_model.layers):
 #     print(i, layer.name)
+
 
 
