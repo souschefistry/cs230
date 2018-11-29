@@ -468,7 +468,7 @@ plot_losses = TrainingPlot(FINAL_EPOCHS, TRAIN_BATCH_SIZE)
 # learning rate
 # loss_history = LossHistory()
 # lrate = LearningRateScheduler(step_decay)
-lr_decay = callbacks.LearningRateScheduler(schedule=lambda epoch: ALPHA_LEARNING_RATE * (0.9 ** epoch))
+lr_decay = LearningRateScheduler(schedule=lambda epoch: ALPHA_LEARNING_RATE * (0.9 ** epoch))
 
 # we train our model again (this time fine-tuning the top 2 inception blocks
 # alongside the top Dense layers
