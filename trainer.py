@@ -16,6 +16,7 @@
     TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
     OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
+
 import sys
 print(sys.path)
 print(sys.executable)
@@ -31,6 +32,7 @@ from keras.utils.data_utils import get_file
 from keras import backend as K
 from keras.models import model_from_json
 from keras import regularizers
+import functools
 
 import tensorflow as tf
 
@@ -384,7 +386,7 @@ custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=optimizer
 # train settings
 TRAIN_BATCH_SIZE = 128
 WARM_UP_EPOCHS = 1
-FINAL_EPOCHS = 100
+FINAL_EPOCHS = 40
 GRAD_CLIP_THRESHOLD = 0.5
 ALPHA_LEARNING_RATE = 0.001
 
@@ -457,10 +459,13 @@ for layer in base_model.layers[143:]:
 
 # stop if val_loss stops improving for 10 epochs
 # early_stopping = EarlyStopping(verbose=1, patience=10, monitor='val_loss')
+# add top-K accuracy reporting
+top3_acc = functools.partial(keras.metrics.top_k_categorical_accuracy, k=3)
+top3_acc.__name__ = 'top3_acc'
 
 opti_grad_clip=optimizers.Adam(lr=ALPHA_LEARNING_RATE)
 # opti_grad_clip=optimizers.RMSprop(lr=2e-3)
-custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=opti_grad_clip, metrics=['accuracy'])
+custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=opti_grad_clip, metrics=['accuracy', 'top_k_categorical_accuracy', top3_acc])
 
 # init plotter
 plot_losses = TrainingPlot(FINAL_EPOCHS, TRAIN_BATCH_SIZE)
@@ -483,15 +488,16 @@ with tf.device('/gpu:0'):
         callbacks=[tensorboard, plot_losses, lr_decay])
 
 with tf.device('/gpu:0'):
-    (loss, accuracy) = custom_resnet_model.evaluate(test_data,
+    (loss, accuracy, top_5, top_3) = custom_resnet_model.evaluate(test_data,
                                                     test_onehot_encoded,
                                                     batch_size=TRAIN_BATCH_SIZE,
                                                     verbose=1)
 
-print("[INFO] final loss={:.4f}, final accuracy: {:.4f}%".format(loss,accuracy * 100))
+print("[INFO] final loss={:.4f}, final accuracy: {:.4f}, final top_5: {:.4f}, final top_3: {:.4f}%".format(loss, accuracy * 100, top_5, top_3))
 
 # let's visualize layer names and layer indices to see how many layers
 # we should freeze:
 # for i, layer in enumerate(base_model.layers):
 #     print(i, layer.name)
+
 
