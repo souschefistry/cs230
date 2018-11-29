@@ -239,7 +239,7 @@ class LossHistory(keras.callbacks.Callback):
         self.lr = []
  
     def on_epoch_end(self, batch, logs={}):
-        self.losses.append(logs.get('loss'))
+        self.losses.append(logs.get("loss"))
         self.lr.append(step_decay(len(self.losses)))
 
 class TrainingPlot(keras.callbacks.Callback):
@@ -494,6 +494,4 @@ print("[INFO] final loss={:.4f}, final accuracy: {:.4f}%".format(loss,accuracy *
 # we should freeze:
 # for i, layer in enumerate(base_model.layers):
 #     print(i, layer.name)
-
-
 
