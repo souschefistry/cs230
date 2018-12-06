@@ -41,7 +41,7 @@ import time
 from keras.preprocessing import image
 from keras.layers import GlobalAveragePooling2D, Dense, Dropout,Activation,Flatten
 from keras.applications import ResNet50
-from keras.applications.inception_v3 import InceptionV3
+# from keras.applications.inception_v3 import InceptionV3
 from keras.callbacks import TensorBoard, EarlyStopping, LearningRateScheduler
 from keras import optimizers
 
@@ -71,8 +71,8 @@ TEST_DATA_SIZE = 1000
 VAL_DATA_SIZE = 1000
 img_h = 224
 img_w = 224
-inception_img_h = 299
-inception_img_w = 299
+# inception_img_h = 299
+# inception_img_w = 299
 
 np.random.seed(seed=1234)
 random.seed(1234)
@@ -143,7 +143,7 @@ from glob import glob
 from keras.preprocessing import image
 from tqdm import tqdm_notebook, tqdm # Iteration visualization
 
-def load_dataset(data_dir_list, max_per_class=100):
+def load_dataset(data_dir_list, mode, max_per_class=100):
     """
         loads images in memory. Expensive method. Doesn't scale well
     """
@@ -152,11 +152,13 @@ def load_dataset(data_dir_list, max_per_class=100):
     images_per_class = max_per_class
 
     for category in tqdm(data_dir_list):
-        img_list=glob("../deepfashion/dataset/train/%s/*.jpg" % category)
+        img_dir = "../deepfashion/dataset/%s/%s/*.jpg" % (mode, category)
+#         print("Loading category =%s from path=%s" % (category, img_dir))
+        img_list=glob(img_dir)
         if not max_per_class:
             # take all images
             images_per_class = len(img_list)
-        print ('Loaded {} images out of {} for category {}'.format(images_per_class, len(img_list), category))
+        print ('Found {} images out of {} for category {}'.format(images_per_class, len(img_list), category))
         for img_path in img_list[:images_per_class]:
             labels.append(category)
             img = image.load_img(img_path, target_size=(img_h, img_w))
@@ -304,13 +306,13 @@ train_data_dir = os.listdir("../deepfashion/dataset/train/")
 val_data_dir = os.listdir("../deepfashion/dataset/val/")
 test_data_dir = os.listdir("../deepfashion/dataset/test/")
 
-images_per_class = 600
-train_data, train_labels = load_dataset(train_data_dir, images_per_class)
-print("[*] loaded %s training images with max %s samples per class" % (len(train_labels), images_per_class))
-val_data, val_labels = load_dataset(val_data_dir, max_per_class=None)
-print("[*] loaded %s validation images with max %s samples per class" % (len(val_labels), images_per_class))
-test_data, test_labels = load_dataset(test_data_dir, max_per_class=None)
-print("[*] loaded %s test images with max %s samples per class" % (len(test_labels), images_per_class))
+images_per_class = 400
+train_data, train_labels = load_dataset(train_data_dir, "train", images_per_class)
+print("[*] loaded %s training images" % (len(train_labels)))
+val_data, val_labels = load_dataset(val_data_dir, "val", images_per_class)
+print("[*] loaded %s validation images" % (len(val_labels)))
+test_data, test_labels = load_dataset(test_data_dir, "test", max_per_class=None)
+print("[*] loaded %s test images" % (len(test_labels)))
 
 # train_set = get_dataset(train_data_dir)
 # val_set = get_dataset(val_data_dir)
@@ -355,15 +357,15 @@ test_onehot_encoded = onehot_encoder.fit_transform(integer_encoded)
 # K.clear_session()
 # K.set_learning_phase(0)
 
-# base_model = ResNet50(
-#         weights='imagenet',
-#         include_top=False,
-#         input_shape=(img_h, img_w, 3))
-
-base_model = InceptionV3(
+base_model = ResNet50(
         weights='imagenet',
         include_top=False,
-        input_shape=(inception_img_h, inception_img_w, 3))
+        input_shape=(img_h, img_w, 3))
+
+# base_model = InceptionV3(
+#         weights='imagenet',
+#         include_top=False,
+#         input_shape=(inception_img_h, inception_img_w, 3))
 
 base_model.summary()
 
@@ -386,7 +388,7 @@ custom_resnet_model = Model(inputs=base_model.input, outputs=predictions)
 custom_resnet_model.summary()
 
 # first: train only the top layers (which were randomly initialized)
-# i.e. freeze all convolutional InceptionV3 layers
+# i.e. freeze all layers
 for layer in custom_resnet_model.layers:
     layer.trainable = False
 
@@ -397,7 +399,7 @@ custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=optimizer
 # train settings
 TRAIN_BATCH_SIZE = 128
 WARM_UP_EPOCHS = 1
-FINAL_EPOCHS = 40
+FINAL_EPOCHS = 100
 GRAD_CLIP_THRESHOLD = 0.5
 ALPHA_LEARNING_RATE = 0.001
 
@@ -447,17 +449,24 @@ for i, layer in enumerate(base_model.layers):
     
 # Test # 3: we chose to train the top 3 resnet blocks, i.e. we will freeze
 # the first 143 layers and unfreeze the rest: (add_13)
-# for layer in base_model.layers[:143]:
+# for layer in base_model.layers[:141]:
 #     layer.trainable = False
-# for layer in base_model.layers[143:]:
+# for layer in base_model.layers[141:]:
 #     layer.trainable = True 
+
+# Test # 4: we chose to train the top 4 resnet blocks, i.e. we will freeze
+# the first 143 layers and unfreeze the rest: (add_12)
+for layer in base_model.layers[:131]:
+    layer.trainable = False
+for layer in base_model.layers[131:]:
+    layer.trainable = True 
 
 # we chose to train the top 2 inception blocks, i.e. we will freeze
 # the first 172 layers and unfreeze the rest:
-for layer in model.layers[:172]:
-    layer.trainable = False
-for layer in model.layers[172:]:
-    layer.trainable = True
+# for layer in model.layers[:172]:
+#     layer.trainable = False
+# for layer in model.layers[172:]:
+#     layer.trainable = True
 
 # UNUSED: Store the model on disk
 # model_name = 'resnet50_{}_{}_{}.h5'.format(TRAIN_BATCH_SIZE, EPOCHS, time.time())
@@ -517,6 +526,7 @@ print("[INFO] final loss={:.4f}, final accuracy: {:.4f}, final top_5: {:.4f}, fi
 # we should freeze:
 # for i, layer in enumerate(base_model.layers):
 #     print(i, layer.name)
+
 
 
 
