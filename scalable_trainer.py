@@ -1,5 +1,5 @@
 """
-    Copyright (c) 2018 dibghosh AT stanfordedu
+    Copyright (c) 2018 dibghosh AT stanford edu
 
     Permission is hereby granted, free of charge, to any person obtaining
     a copy of this software and associated documentation files (the "Software"),
@@ -19,7 +19,6 @@
     TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
     OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
-
 import sys
 print(sys.path)
 print(sys.executable)
@@ -35,6 +34,7 @@ from keras.preprocessing import image
 from keras.layers import GlobalAveragePooling2D, Dense, Dropout,Activation,Flatten
 from keras.preprocessing.image import ImageDataGenerator
 from keras.applications import ResNet50
+from keras.applications.resnet50 import preprocess_input
 from keras.callbacks import TensorBoard
 from keras import optimizers
 
@@ -48,13 +48,23 @@ from keras.models import model_from_json
 from keras import backend as K
 
 import tensorflow as tf
+import functools
 
 from glob import glob
 
 # lscpu Core(s) per socket: 2
 NUM_PARALLEL_EXEC_UNITS = 2
-sess = tf.Session(config=tf.ConfigProto(log_device_placement=True))
-tf.ConfigProto(intra_op_parallelism_threads=NUM_PARALLEL_EXEC_UNITS, inter_op_parallelism_threads=2, allow_soft_placement=True, device_count = {'GPU': 1, 'CPU': NUM_PARALLEL_EXEC_UNITS })
+# sess = tf.Session(config=tf.ConfigProto(log_device_placement=True))
+sess = tf.Session(
+    config=tf.ConfigProto(
+        log_device_placement=True,
+        intra_op_parallelism_threads=NUM_PARALLEL_EXEC_UNITS, 
+        inter_op_parallelism_threads=2,
+        allow_soft_placement=True,
+#         gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.5),
+        device_count = {'GPU': 1, 'CPU': NUM_PARALLEL_EXEC_UNITS }
+    )
+)
 keras.backend.set_session(sess)
 
 NUM_CLASSES = 46
@@ -131,16 +141,20 @@ def load_model_from_disk(model_name):
 NUM_EPOCHS = 1
 n_H, n_W = 224, 224
 TRAIN_BATCH_SIZE = 128
-WARM_UP_EPOCHS = 5
-FINE_TUNING_EPOCHS = 500
-nb_train_samples = 209222
-nb_validation_samples= 40000
+WARM_UP_EPOCHS = 1
+FINE_TUNING_EPOCHS = 1
+nb_train_samples = 35979
+nb_validation_samples= 19140
 nb_test_samples = 40000
+ALPHA_LEARNING_RATE = 0.001
 
 train_datagen = ImageDataGenerator(
         rescale=1./255,
         shear_range=0.2,
         zoom_range=0.2,
+        rotation_range=30,
+        width_shift_range=0.2,
+        height_shift_range=0.2,
         horizontal_flip=True)
 
 # no augmentation for test generator
@@ -213,13 +227,13 @@ print('Training time (secs): %s' % (time.time() - t))
 with tf.device('/gpu:0'):
     (loss, accuracy) = custom_resnet_model.evaluate_generator(
         test_generator,
-        steps_per_epoch=nb_test_samples // TRAIN_BATCH_SIZE,
+        steps=nb_test_samples // TRAIN_BATCH_SIZE,
         verbose=1)
 
 print("[INFO] pre fine-tune loss={:.4f}, pre fine-tune accuracy: {:.4f}%".format(loss,accuracy * 100))
 
 # define tensorboard details
-tensorboard = TensorBoard(log_dir="./deepfashion/tboard-resnet50-scalable/{}_{}_{}".format(TRAIN_BATCH_SIZE, FINAL_EPOCHS, time.time()), write_graph=True)
+tensorboard = TensorBoard(log_dir="./deepfashion/tboard-resnet50-scalable/{}_{}_{}".format(TRAIN_BATCH_SIZE, FINE_TUNING_EPOCHS, time.time()), write_graph=True)
 
 # improvement #1
 # early_stopping = EarlyStopping(verbose=1, patience=40, monitor='val_loss')
@@ -238,15 +252,48 @@ callbacks_list = [tensorboard]
 for i, layer in enumerate(base_model.layers):
     print(i, layer.name)
     
-# we chose to train the top 1 resnet blocks, i.e. we will freeze
-# the first 163 layers and unfreeze the rest:
-for layer in base_model.layers[:163]:
-    layer.trainable = False
-for layer in base_model.layers[163:]:
-    layer.trainable = True
+# Test # 1: we chose to train the top 1 resnet blocks, i.e. we will freeze
+# the first 163 layers and unfreeze the rest: (add_31)
+# for layer in base_model.layers[:163]:
+#     layer.trainable = False
+# for layer in base_model.layers[163:]:
+#     layer.trainable = True   
+    
+# Test # 2: we chose to train the top 2 resnet blocks, i.e. we will freeze
+# the first 153 layers and unfreeze the rest: (add_30)
+# for layer in base_model.layers[:153]:
+#     layer.trainable = False
+# for layer in base_model.layers[153:]:
+#     layer.trainable = True
+    
+# Test # 3: we chose to train the top 3 resnet blocks, i.e. we will freeze
+# the first 143 layers and unfreeze the rest: (add_29)
+# for layer in base_model.layers[:141]:
+#     layer.trainable = False
+# for layer in base_model.layers[141:]:
+#     layer.trainable = True 
 
-# recompile network with unfreezing weights
-custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=optimizers.Adam(), metrics=['accuracy'])
+# Test # 4: we chose to train the top 4 resnet blocks, i.e. we will freeze
+# the first 143 layers and unfreeze the rest: (add_28)
+for layer in base_model.layers[:131]:
+    layer.trainable = False
+for layer in base_model.layers[131:]:
+    layer.trainable = True     
+
+top3_acc = functools.partial(keras.metrics.top_k_categorical_accuracy, k=3)
+top3_acc.__name__ = 'top3_acc'
+
+opti_grad_clip=optimizers.Adam(lr=ALPHA_LEARNING_RATE)
+
+# opti_grad_clip=optimizers.RMSprop(lr=2e-3)
+custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=opti_grad_clip, metrics=['accuracy', 'top_k_categorical_accuracy', top3_acc])
+
+# init plotter
+# plot_losses = TrainingPlot(FINE_TUNING_EPOCHS, TRAIN_BATCH_SIZE)
+# callbacks_list.append(plot_losses)
+
+lr_decay = LearningRateScheduler(schedule=lambda epoch: ALPHA_LEARNING_RATE * (0.9 ** epoch))
+callbacks_list.append(lr_decay)
 
 # run full training with fine tuning
 t=time.time()
@@ -263,12 +310,12 @@ print('Training time (secs): %s' % (time.time() - t))
 
 # run accuracy calculation after finetuning
 with tf.device('/gpu:0'):
-    (loss, accuracy) = custom_resnet_model.evaluate_generator(
+    (loss, accuracy, top_5, top_3) = custom_resnet_model.evaluate_generator(
         test_generator,
-        steps_per_epoch=nb_test_samples // TRAIN_BATCH_SIZE,
+        steps=nb_test_samples // TRAIN_BATCH_SIZE,
         verbose=1)
 
-print("[INFO] final loss={:.4f}, final accuracy: {:.4f}%".format(loss,accuracy * 100))
+print("[INFO] final loss={:.4f}, final accuracy: {:.4f}, final top_5: {:.4f}, final top_3: {:.4f}%".format(loss, accuracy * 100, top_5, top_3))
 
 # t=time.time()
 # with tf.device('/gpu:0'):
@@ -311,3 +358,50 @@ print("[INFO] final loss={:.4f}, final accuracy: {:.4f}%".format(loss,accuracy *
 # custom_resnet_model = load_model_from_disk(model_name)
 # custom_resnet_model.compile(loss='categorical_crossentropy', optimizer=optimizers.Adam(), metrics=['accuracy'])
 
+# visualize results
+
+"""
+# Create a generator for prediction
+validation_generator = validation_datagen.flow_from_directory(
+        validation_dir,
+        target_size=(image_size, image_size),
+        batch_size=val_batchsize,
+        class_mode='categorical',
+        shuffle=False)
+ 
+# Get the filenames from the generator
+fnames = validation_generator.filenames
+ 
+# Get the ground truth from generator
+ground_truth = validation_generator.classes
+ 
+# Get the label to class mapping from the generator
+label2index = validation_generator.class_indices
+ 
+# Getting the mapping from class index to class label
+idx2label = dict((v,k) for k,v in label2index.items())
+ 
+# Get the predictions from the model using the generator
+predictions = model.predict_generator(validation_generator, steps=validation_generator.samples/validation_generator.batch_size,verbose=1)
+predicted_classes = np.argmax(predictions,axis=1)
+ 
+errors = np.where(predicted_classes != ground_truth)[0]
+print("No of errors = {}/{}".format(len(errors),validation_generator.samples))
+ 
+# Show the errors
+for i in range(len(errors)):
+    pred_class = np.argmax(predictions[errors[i]])
+    pred_label = idx2label[pred_class]
+     
+    title = 'Original label:{}, Prediction :{}, confidence : {:.3f}'.format(
+        fnames[errors[i]].split('/')[0],
+        pred_label,
+        predictions[errors[i]][pred_class])
+     
+    original = load_img('{}/{}'.format(validation_dir,fnames[errors[i]]))
+    plt.figure(figsize=[7,7])
+    plt.axis('off')
+    plt.title(title)
+    plt.imshow(original)
+    plt.show()
+"""
