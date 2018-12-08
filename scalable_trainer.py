@@ -35,8 +35,9 @@ from keras.layers import GlobalAveragePooling2D, Dense, Dropout,Activation,Flatt
 from keras.preprocessing.image import ImageDataGenerator
 from keras.applications import ResNet50
 from keras.applications.resnet50 import preprocess_input
-from keras.callbacks import TensorBoard
+from keras.callbacks import TensorBoard, EarlyStopping, LearningRateScheduler
 from keras import optimizers
+from keras import regularizers
 
 from keras.layers import Input
 from keras.models import Model
@@ -142,7 +143,7 @@ NUM_EPOCHS = 1
 n_H, n_W = 224, 224
 TRAIN_BATCH_SIZE = 128
 WARM_UP_EPOCHS = 1
-FINE_TUNING_EPOCHS = 1
+FINE_TUNING_EPOCHS = 50
 nb_train_samples = 35979
 nb_validation_samples= 19140
 nb_test_samples = 40000
